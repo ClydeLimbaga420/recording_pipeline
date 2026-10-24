@@ -36,7 +36,7 @@ class AudioPipeline:
     input_device : Optional[Union[int, str]]
         Sound device for capture; ``None`` uses the default.
     start_number : int
-        Floor for auto-incrementing new word numbers.
+        Floor for auto-incrementing new sentence numbers.
     prefix_length : int
         Number of leading letters used to group index sections.
     reduce_noise : bool
@@ -44,7 +44,7 @@ class AudioPipeline:
         ``False`` the raw signal is archived and the review panel's
         ``[f]`` option reports that reduction is disabled.
     multi_speaker : bool
-        Dupe policy.  ``True`` keeps every take of a word; ``False``
+        Dupe policy.  ``True`` keeps every take of a sentence; ``False``
         overwrites an existing take after asking which one.
     """
 
@@ -85,30 +85,30 @@ class AudioPipeline:
         )
 
     # ------------------------------------------------------------------
-    def _resolve_cli_target(self, word: str) -> SaveTarget:
+    def _resolve_cli_target(self, sentence: str) -> SaveTarget:
         """Resolve the save target, asking which take to overwrite.
 
         Mirrors the GUI's dropdown: with ``multi_speaker`` off and the
-        word already indexed, the user picks from the indexed takes
+        sentence already indexed, the user picks from the indexed takes
         instead of always clobbering the latest one.
 
         Parameters
         ----------
-        word : str
-            The word being recorded.
+        sentence : str
+            The sentence being recorded.
 
         Returns
         -------
         SaveTarget
             The resolved target.  Falls back to the latest take when the
-            answer is empty or not one of the word's takes.
+            answer is empty or not one of the sentence's takes.
         """
-        target: SaveTarget = self.archiver.resolve_target(word)
+        target: SaveTarget = self.archiver.resolve_target(sentence)
         if self.archiver.multi_speaker or not target.is_dupe:
             return target
 
         takes: str = ", ".join(str(n) for n in target.existing)
-        print(f"\n  ⚠ '{word}' is already indexed → take(s) {takes}.")
+        print(f"\n  ⚠ '{sentence}' is already indexed → take(s) {takes}.")
         answer: str = input(
             f"  ➤ Overwrite which take? [latest/{target.existing[-1]}]: "
         ).strip()
@@ -120,7 +120,7 @@ class AudioPipeline:
             print("  ⚠ Not a number — using the latest take.")
             return target
         try:
-            return self.archiver.resolve_target(word, overwrite=chosen)
+            return self.archiver.resolve_target(sentence, overwrite=chosen)
         except ValueError as exc:
             print(f"  ⚠ {exc} Using the latest take.")
             return target

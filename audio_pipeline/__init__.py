@@ -6,10 +6,9 @@ reviewing, and archiving audio assets with a structured text index.
 
 from .models import RecordingConfig, PipelineResult
 from .config import Settings, load_settings, load_env_file
-from .index import AudioIndex
+from .index import AudioIndex, normalize_sentence
 from .recorder import AudioRecorder
 from .filter import AudioFilter
-from .segmenter import SentenceSegmenter, SplitResult, split_sentence_words
 from .archiver import AudioArchiver
 from .pipeline import AudioPipeline
 
@@ -27,11 +26,9 @@ __all__ = [
     "load_settings",
     "load_env_file",
     "AudioIndex",
+    "normalize_sentence",
     "AudioRecorder",
     "AudioFilter",
-    "SentenceSegmenter",
-    "SplitResult",
-    "split_sentence_words",
     "AudioArchiver",
     "AudioPipeline",
     "PipelineApp",

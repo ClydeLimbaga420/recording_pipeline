@@ -26,6 +26,8 @@ class RecordingConfig:
         Base filename (without extension).  Auto-generates if empty.
     notes : str
         User-provided metadata notes.
+    word : str
+        The full sentence being recorded and indexed.
     """
 
     duration_seconds: float
@@ -53,15 +55,15 @@ class PipelineResult:
     filepath : Optional[str]
         Absolute path to the written audio file, if any.
     word : str
-        The word that was recorded.
+        The sentence that was recorded.
     number : Optional[int]
         Number of the audio file written by this run.
     numbers : List[int]
-        Every number indexed for the word once this run was registered
+        Every number indexed for the sentence once this run was registered
         (e.g. ``[1, 2]`` for ``amo = 1, 2``).
     is_dupe : bool
-        True when the word already had at least one indexed take before
-        this run.
+        True when the sentence already had at least one indexed take
+        before this run.
     new_take : bool
         True when this run added a take instead of replacing one.
     duration_recorded : float

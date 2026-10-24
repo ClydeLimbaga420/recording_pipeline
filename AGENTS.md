@@ -1,7 +1,9 @@
 # AGENTS.md
 
 Python 3.9+ package for recording, noise-filtering, reviewing, and archiving
-audio words into numeric `.mp3` files with an INI-style index.
+audio sentences into numeric `.mp3` files with an INI-style index.  Every
+entry is one whole sentence: the recording is saved as a single file and
+indexed under the full sentence text (no word splitting).
 
 ## Commands
 
@@ -22,9 +24,8 @@ audio words into numeric `.mp3` files with an INI-style index.
 Each concern is one module under `audio_pipeline/`:
 - `recorder.py` — `AudioRecorder` (sounddevice) record + playback
 - `filter.py` — `AudioFilter` (noisereduce spectral gating)
-- `segmenter.py` — `SentenceSegmenter` (silence-based word cuts) + `split_sentence_words`; numpy only, no STT
-- `archiver.py` — `AudioArchiver`: mp3 encode + the word→number index
-- `index.py` — `AudioIndex`: parse/render of the index text
+- `archiver.py` — `AudioArchiver`: mp3 encode + the sentence→number index
+- `index.py` — `AudioIndex`: parse/render of the index text + `normalize_sentence`
 - `pipeline.py` — `AudioPipeline` orchestrator: Record → Filter → Review → Archive
 - `config.py` — `Settings`/`load_settings` (.env)
 - `models.py` — `RecordingConfig`, `PipelineResult`
@@ -39,83 +40,53 @@ Each concern is one module under `audio_pipeline/`:
 - `INDEX_START_NUMBER` sets where auto-increment begins; `INDEX_PREFIX_LENGTH` (default 2) sets section grouping width.
 - `MULTI_SPEAKER` (default 0) picks the dupe policy; `REDUCE_NOISE` (default 1) toggles background noise reduction. CLI overrides: `--multi-speaker`, `--no-filter`.
 - `REDUCE_NOISE` is the one setting the GUI **writes back**: the checkbox calls `config.set_env_value(...)`, which edits `.env` in place (comments and other keys preserved) so the choice survives a restart. `MULTI_SPEAKER` is deliberately session-only — the checkbox always starts from `.env`, defaulting to off.
-- `SEGMENT_*` (all optional, sentence mode only): `SEGMENT_SILENCE_RATIO` (0.14), `SEGMENT_NOISE_MULTIPLIER` (3.0), `SEGMENT_MIN_WORD_SECONDS` (0.12), `SEGMENT_MIN_GAP_SECONDS` (0.09), `SEGMENT_PAD_MS` (40). Read-only — the GUI never writes them.
 
 ## Index format (critical — do not regress)
 
-`index.txt` is INI-style, grouped by a lowercase prefix of the word (default
-2 letters), mapping each word to **one or more** numeric stems of its audio files:
+`index.txt` is INI-style, grouped by a lowercase prefix of the sentence
+(default 2 letters), mapping each sentence to **one or more** numeric stems
+of its audio files:
 
 ```ini
-[si]
-sa = 9
-siya = 10
-[am]
-amo = 1, 2
+[ak]
+ako ay mabait = 10
+[ku]
+kumain ako = 1, 2
 ```
 
-Meaning `siya` is stored as `10.mp3`, while `amo` has two takes: `1.mp3` and
-`2.mp3`. Rules:
-- Each entry is `word = number[, number…]` under a `[prefix]` section (prefix length = `INDEX_PREFIX_LENGTH`, default 2). A word maps to `Dict[str, List[int]]` internally — a single number parses into a one-element list, so pre-multi-take index files load unchanged and still render identically.
-- Words sorted alphabetically within each section; sections sorted; numbers ascending.
-- Numbers auto-increment globally (`max+1` across every take of every word), starting at `INDEX_START_NUMBER`.
+Meaning `ako ay mabait` is stored as `10.mp3`, while `kumain ako` has two
+takes: `1.mp3` and `2.mp3`. Rules:
+- Each entry is `sentence = number[, number…]` under a `[prefix]` section (prefix length = `INDEX_PREFIX_LENGTH`, default 2). A sentence maps to `Dict[str, List[int]]` internally — a single number parses into a one-element list, so pre-multi-take index files load unchanged and still render identically.
+- Sentences sorted alphabetically within each section; sections sorted; numbers ascending.
+- Numbers auto-increment globally (`max+1` across every take of every sentence), starting at `INDEX_START_NUMBER`.
+- `normalize_sentence()` collapses whitespace and lowercases before keying, so spacing/case variants share one entry; punctuation is kept.
 - NOT JSONL — an earlier version used JSONL; keep the INI format.
 
-## Dupe words (two takes per word)
+## Dupe sentences (two takes per sentence)
 
-A word may hold several takes, typically one per speaker. `AudioArchiver.multi_speaker`
+A sentence may hold several takes, typically one per speaker. `AudioArchiver.multi_speaker`
 selects the policy, and it is decided in `resolve_target`, never in `register_word`:
 
-- **Multi-speaker on** — an already-indexed word gets a fresh number, so nothing is overwritten: `amo = 1` + `amo = 1, 2` with `1.mp3` and `2.mp3`.
-- **Multi-speaker off (default)** — an already-indexed word reuses a number and the audio file at that stem is replaced. `resolve_target(word, overwrite=n)` picks which take; `overwrite=None` means the latest. `SaveTarget.overwrites` is `True` when a save will destroy existing audio, so callers can confirm first (the GUI dropdown + `askyesno`, the CLI prompt in `_resolve_cli_target`).
-- `register_word(word, number)` is **idempotent** — it only ensures `number` is in the word's list. That single call serves both policies: it appends after a multi-speaker save and is a no-op after an overwrite.
-- `clean()` deletes every number of every word, so a multi-take word loses all of its files.
+- **Multi-speaker on** — an already-indexed sentence gets a fresh number, so nothing is overwritten: `amo = 1` + `amo = 1, 2` with `1.mp3` and `2.mp3`.
+- **Multi-speaker off (default)** — an already-indexed sentence reuses a number and the audio file at that stem is replaced. `resolve_target(sentence, overwrite=n)` picks which take; `overwrite=None` means the latest. `SaveTarget.overwrites` is `True` when a save will destroy existing audio, so callers can confirm first (the GUI dropdown + `askyesno`, the CLI prompt in `_resolve_cli_target`).
+- `register_word(sentence, number)` is **idempotent** — it only ensures `number` is in the sentence's list. That single call serves both policies: it appends after a multi-speaker save and is a no-op after an overwrite.
+- `clean()` deletes every number of every sentence, so a multi-take sentence loses all of its files.
 
-## Sentence mode (cut a sentence into words)
+## Sentence archiving (one file per sentence)
 
-GUI only, and **not a mode switch** — the word field itself decides, so
-there is nothing to remember to tick. `sentence_mode` is a `BooleanVar`
-that `_sync_entry_mode()` recomputes from
-`len(split_sentence_words(word_var.get())) >= 2`; one word keeps the
-single-word path, two or more go to `_save_sentence`. There is **no
-speech-to-text model** — the user types the sentence in the word field
-(`split_sentence_words` tokenises it, stripping punctuation and
-lowercasing) and speaks it. `SentenceSegmenter.split(audio, word_count)`
-finds the cuts from the waveform alone:
-
-1. 20 ms frames, RMS energy per frame, `peak = p95` / `floor = p20`.
-2. Gate at `max(peak * silence_ratio, floor * noise_multiplier)`. The
-   noise-floor term is what keeps a quiet recording in a noisy room from
-   chattering across the threshold and shattering one word.
-3. `_close_short_gaps` rejoins regions split by a plosive; `_absorb_short`
-   merges regions under `min_word_seconds` into their nearest neighbour.
-4. `_reconcile` forces the count to the typed word count — too many cuts
-   merge at the shortest gap, too few halve the longest cut. `SplitResult`
-   reports `detected` / `merged` / `split` so the GUI can warn.
-5. Each region is padded by `pad_ms` on both sides, so neighbouring cuts
-   overlap slightly rather than clipping an onset.
-
-Every occurrence is archived with a **fresh** number via
-`AudioArchiver.resolve_new_take(word)`, which is `resolve_target` with
-the dupe policy forced aside — `overwrites` is always `False`. So "amo ko
-amo" yields `amo = 1, 3` and `ko = 2`: the repeated word keeps both
-takes and the index still shows it as a word. The multi-speaker checkbox
-and the take picker are disabled in sentence mode because neither
-applies, but they keep their values for when the mode is switched off.
-`_sync_entry_mode()` is re-run from a `word_var` trace, so the label,
-the plan hint, and those two controls follow every keystroke;
-`_sync_entry_mode(refresh=True)` additionally re-reads the index (used on
-`FocusOut` and around saves — never on a keystroke, to keep typing off
-the disk). `_save_sentence` repeats the archiver's resolve → save →
-register sequence per word, since each call re-reads the index (see
-sequencing below).
+There is no cutting/splitting and no speech-to-text. The user types the
+whole sentence in the entry field (or at the CLI prompt) and speaks it; the
+complete capture is saved as **one** audio file under that sentence, using
+the same resolve → save → register sequence as any other entry. Even a
+single word is treated as a one-word sentence. `normalize_sentence()` is the
+only text processing: whitespace collapsed, lowercased, punctuation kept.
 
 ## Archiver sequencing (order matters)
 
 `AudioArchiver` reads the index file from disk on **every** call, so:
-1. `resolve_target(word, overwrite=None)` → a `SaveTarget` (number + what already exists), or `resolve_new_take(word)` to force a fresh number (sentence mode), or `numbers_for_word(word)` to just read the take list
+1. `resolve_target(sentence, overwrite=None)` → a `SaveTarget` (number + what already exists), or `numbers_for_word(sentence)` to just read the take list
 2. `save_as_mp3(audio, str(target.number))` → writes `<number>.mp3`
-3. `register_word(word, number)` → persists the index
+3. `register_word(sentence, number)` → persists the index
 
 Number must be resolved and the audio saved before `register_word`. Do not batch
 resolution calls ahead of `register_word` — each reloads the file, so unpersisted
@@ -132,6 +103,6 @@ it from the UI variable and push it to the archiver before any
 
 Dupe + filter controls:
 - **Keep every take (multi-speaker)** checkbutton → `_apply_multi_speaker()` pushes it onto `archiver.multi_speaker` and enables/disables the take picker.
-- **Overwrite take** dropdown lists the takes already indexed for the word in the **Word to record** field, newest last and preselected. Populated by `_refresh_overwrite_choices()` on word `FocusOut`, after every save, after `clean()`, and manually via the **Refresh** button (`_on_refresh_takes_click`, which also reports the count in the status line). `_selected_overwrite()` re-validates the choice against the index and returns `None` (fall back to the latest) if it went stale, so a stale dropdown can never clobber the wrong file.
+- **Overwrite take** dropdown lists the takes already indexed for the sentence in the **Sentence to record** field, newest last and preselected. Populated by `_refresh_overwrite_choices()` on field `FocusOut`, after every save, after `clean()`, and manually via the **Refresh** button (`_on_refresh_takes_click`, which also reports the count in the status line). `_selected_overwrite()` re-validates the choice against the index and returns `None` (fall back to the latest) if it went stale, so a stale dropdown can never clobber the wrong file.
 - **Background noise reduction** checkbutton → when on, `_on_capture_done` denoises each capture automatically; when off the raw signal is archived. The manual **Denoise** button works either way. `_on_reduce_noise_toggle` persists the choice to `REDUCE_NOISE` via `config.set_env_value` (and warns if the write fails, since the setting would otherwise silently reset).
-- No mode switch: the field's own content decides. `_sync_entry_mode()` is called from a `word_var` trace (every keystroke, no disk access) and from `_on_word_focus_out` / `_on_save_click` with `refresh=True` (which also re-reads the index for the take picker). It relabels the field *Sentence* vs *Word to record*, rewrites the plan hint, and disables the two single-word-only controls while a sentence is typed. `_on_save_click` branches to `_save_sentence` instead of the single-word path; it always applies the start-number and format first. `_confirm_sentence` shows the planned word→time mapping and warns when `SplitResult.adjusted` is set, so a bad cut can be discarded and re-recorded.
+- Every entry follows one path: `_on_save_click` normalises the field with `normalize_sentence()`, resolves the take, saves the whole buffer as one file, and registers that sentence. `_current_sentence()` centralises the normalisation used by the hint, the take picker, and saving. The plan hint updates from a `word_var` trace (no disk access); the index is re-read on `FocusOut` and around saves.

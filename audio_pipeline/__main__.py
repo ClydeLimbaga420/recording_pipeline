@@ -39,14 +39,14 @@ def _build_config(settings: Settings) -> RecordingConfig:
     RecordingConfig
         Session configuration for a single capture.
     """
-    word: str = input("  ➤ Word to record: ").strip()
+    sentence: str = input("  ➤ Sentence to record: ").strip()
     return RecordingConfig(
         duration_seconds=settings.duration_seconds,
         sample_rate=settings.sample_rate,
         channels=settings.channels,
         output_dir=str(settings.resolved_destination),
         notes="",
-        word=word,
+        word=sentence,
     )
 
 
@@ -93,7 +93,7 @@ def main() -> int:
         "--multi-speaker",
         action="store_true",
         help=(
-            "Keep every recording of a word as a separate take "
+            "Keep every recording of a sentence as a separate take "
             "(amo = 1, 2) instead of overwriting an existing one. "
             "Overrides MULTI_SPEAKER from .env."
         ),
@@ -132,7 +132,7 @@ def main() -> int:
 
     config: RecordingConfig = _build_config(settings)
 
-    print(f"  Word     : {config.word}")
+    print(f"  Sentence : {config.word}")
     print(f"  Duration : {config.duration_seconds}s")
     print(f"  Format   : {args.format or settings.audio_format}")
     print(f"  Noise    : {'on' if reduce_noise else 'off'}")

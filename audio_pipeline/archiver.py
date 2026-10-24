@@ -1,4 +1,4 @@
-"""Archival: audio encoding and word→audio text indexing."""
+"""Archival: audio encoding and sentence→audio text indexing."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import List, Optional
 import numpy as np
 from pydub import AudioSegment
 
-from .index import AudioIndex
+from .index import AudioIndex, normalize_sentence
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def _normalise_format(audio_format: str) -> str:
 
 @dataclass(frozen=True)
 class SaveTarget:
-    """Where one recording of a word should be written.
+    """Where one recording of a sentence should be written.
 
     Returned by :meth:`AudioArchiver.resolve_target`.  Callers use
     ``number`` as the audio filename stem, save the file, then hand the
@@ -103,18 +103,18 @@ class SaveTarget:
     Attributes
     ----------
     word : str
-        Normalised (lowercased, stripped) word.
+        Normalised (lowercased, whitespace-collapsed) sentence.
     number : int
         The number to write now.
     existing : List[int]
-        Numbers already indexed for this word *before* this save, in
-        ascending order.  Empty for a word never seen before.
+        Numbers already indexed for this sentence *before* this save, in
+        ascending order.  Empty for a sentence never seen before.
     is_new : bool
-        True when the word was not indexed at all.
+        True when the sentence was not indexed at all.
     is_new_take : bool
-        True when an already-indexed word was given a brand-new number
-        (multi-speaker mode).  False means ``number`` may already have an
-        audio file that this save will replace.
+        True when an already-indexed sentence was given a brand-new
+        number (multi-speaker mode).  False means ``number`` may already
+        have an audio file that this save will replace.
     """
 
     word: str
@@ -126,7 +126,7 @@ class SaveTarget:
     # ------------------------------------------------------------------
     @property
     def is_dupe(self) -> bool:
-        """True when the word already had at least one indexed take."""
+        """True when the sentence already had at least one indexed take."""
         return bool(self.existing)
 
     # ------------------------------------------------------------------
@@ -138,7 +138,7 @@ class SaveTarget:
     # ------------------------------------------------------------------
     @property
     def numbers_after(self) -> List[int]:
-        """All numbers for the word once this save is registered."""
+        """All numbers for the sentence once this save is registered."""
         return sorted(set(self.existing) | {self.number})
 
 
@@ -146,9 +146,10 @@ class AudioArchiver:
     """Converts NumPy buffers to compressed audio files and manages storage.
 
     Audio files are named by an auto-incrementing numeric stem
-    (e.g. ``5.mp3`` or ``5.opus``), and each spoken word is recorded in
-    the index grouped by its first letters.  A word may hold several
-    takes (``amo = 1, 2``), each with its own globally unique number.
+    (e.g. ``5.mp3`` or ``5.opus``), and each spoken sentence is recorded
+    in the index grouped by its first letters.  A sentence may hold
+    several takes (``amo ko amo = 1, 2``), each with its own globally
+    unique number.
 
     Parameters
     ----------
@@ -226,12 +227,12 @@ class AudioArchiver:
         Parameters
         ----------
         word : str
-            Spoken word (case-insensitive).
+            Spoken sentence (case-insensitive).
 
         Returns
         -------
         List[int]
-            Ascending numbers, empty when the word is not indexed.
+            Ascending numbers, empty when the sentence is not indexed.
         """
         return self._load_index().numbers_for_word(word)
 
@@ -317,12 +318,12 @@ class AudioArchiver:
         Parameters
         ----------
         word : str
-            Spoken word being recorded (case-insensitive).
+            Spoken sentence being recorded (case-insensitive).
         overwrite : Optional[int]
             Which existing take to replace.  Only meaningful when the
-            word is already indexed and ``multi_speaker`` is off.  ``None``
-            (the default) targets the latest take.  A value the index does
-            not hold for this word raises ``ValueError``.
+            sentence is already indexed and ``multi_speaker`` is off.
+            ``None`` (the default) targets the latest take.  A value the
+            index does not hold for this sentence raises ``ValueError``.
 
         Returns
         -------
@@ -333,17 +334,17 @@ class AudioArchiver:
         Raises
         ------
         ValueError
-            If *word* is empty, or *overwrite* is not one of the word's
-            indexed takes.
+            If *word* is empty, or *overwrite* is not one of the
+            sentence's indexed takes.
         """
-        normalized: str = word.strip().lower()
+        normalized: str = normalize_sentence(word)
         if not normalized:
-            raise ValueError("Cannot index an empty word.")
+            raise ValueError("Cannot index an empty sentence.")
 
         index: AudioIndex = self._load_index()
         existing: List[int] = index.numbers_for_word(normalized)
 
-        # Never indexed: a plain new word.
+        # Never indexed: a plain new sentence.
         if not existing:
             return SaveTarget(
                 word=normalized,
@@ -382,45 +383,6 @@ class AudioArchiver:
         )
 
     # ------------------------------------------------------------------
-    def resolve_new_take(self, word: str) -> SaveTarget:
-        """Reserve a brand-new number for *word*, ignoring the dupe policy.
-
-        A sentence needs this: every occurrence of a word in a
-        sentence is a distinct recording, so a repeated word must always
-        get its own number rather than replacing an earlier take.
-        Everything else about the target is read from the index exactly
-        as :meth:`resolve_target` would, so ``overwrites`` is always
-        ``False`` — nothing already on disk is destroyed.
-
-        Parameters
-        ----------
-        word : str
-            The word (or repeated word) being archived.
-
-        Returns
-        -------
-        SaveTarget
-            A fresh number plus whatever the word already has indexed.
-
-        Raises
-        ------
-        ValueError
-            If *word* is empty.
-        """
-        normalized: str = word.strip().lower()
-        if not normalized:
-            raise ValueError("Cannot index an empty word.")
-
-        index: AudioIndex = self._load_index()
-        existing: List[int] = index.numbers_for_word(normalized)
-        return SaveTarget(
-            word=normalized,
-            number=index.next_number,
-            existing=existing,
-            is_new=not existing,
-            is_new_take=bool(existing),
-        )
-
     def number_for_word(self, word: str) -> int:
         """Return the audio number for *word* without persisting.
 
@@ -452,14 +414,14 @@ class AudioArchiver:
         Parameters
         ----------
         word : str
-            The spoken word being indexed.
+            The spoken sentence being indexed.
         number : int
-            The audio number already assigned to this word.
+            The audio number already assigned to this sentence.
 
         Returns
         -------
         List[int]
-            Every number now indexed for the word, ascending.
+            Every number now indexed for the sentence, ascending.
 
         Raises
         ------
@@ -467,10 +429,10 @@ class AudioArchiver:
             If *word* is empty.
         """
         index: AudioIndex = self._load_index()
-        normalized: str = word.strip().lower()
+        normalized: str = normalize_sentence(word)
         numbers: List[int] = index.add_number(normalized, number)
         index.save(self.index_path)
-        logger.info("Registered word '%s' → %s", normalized, numbers)
+        logger.info("Registered sentence '%s' → %s", normalized, numbers)
         return numbers
 
     # ------------------------------------------------------------------
