@@ -41,6 +41,12 @@ class PipelineApp:
         Typed pipeline settings.
     """
 
+    # Sentence entry grows with the typed text so long sentences stay
+    # visible, but is capped so a very long sentence cannot make the
+    # window wider than the screen.
+    _WORD_MIN_WIDTH: int = 28
+    _WORD_MAX_WIDTH: int = 80
+
     def __init__(self, settings: Settings) -> None:
         self.settings: Settings = settings
 
@@ -83,7 +89,7 @@ class PipelineApp:
         """Construct all widgets and layout."""
         self.root = tk.Tk()
         self.root.title("Audio Capture Pipeline")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
 
         main = ttk.Frame(self.root, padding=16)
         main.grid(row=0, column=0, sticky="nsew")
@@ -94,13 +100,16 @@ class PipelineApp:
         self.word_label.grid(row=0, column=0, sticky="w")
         self.word_var = tk.StringVar()
         self.word_entry = ttk.Entry(
-            main, textvariable=self.word_var, width=28
+            main, textvariable=self.word_var, width=self._WORD_MIN_WIDTH
         )
-        self.word_entry.grid(row=0, column=1, sticky="w", padx=6)
+        self.word_entry.grid(row=0, column=1, sticky="we", padx=6)
+        main.columnconfigure(1, weight=1)
         self.plan_hint = ttk.Label(
             main,
             text="",
             foreground="#666",
+            wraplength=320,
+            justify="left",
         )
         self.plan_hint.grid(row=0, column=2, columnspan=2, sticky="w")
         # Leaving the field is when the take list can be looked up.
@@ -309,8 +318,19 @@ class PipelineApp:
 
     # ------------------------------------------------------------------
     def _on_word_typed(self, *_args: object) -> None:
-        """Refresh the plan hint as the sentence is edited."""
+        """Refresh the plan hint and widen the entry as text grows."""
+        self._fit_word_entry()
         self._update_plan_hint()
+
+    # ------------------------------------------------------------------
+    def _fit_word_entry(self) -> None:
+        """Size the sentence entry to its content within sane bounds."""
+        width: int = max(
+            self._WORD_MIN_WIDTH,
+            min(len(self.word_var.get()) + 2, self._WORD_MAX_WIDTH),
+        )
+        if int(self.word_entry.cget("width")) != width:
+            self.word_entry.config(width=width)
 
     # ------------------------------------------------------------------
     def _update_plan_hint(self) -> None:
